@@ -5,32 +5,55 @@ const pino = require('pino');
 // 🌟 SECURE FIREBASE URL FROM GITHUB SECRETS 🌟
 const FIREBASE_URL = process.env.FIREBASE_URL;
 
-const orderStates = {}; 
+const orderStates = {};
 
-// Function to fetch the dynamic menu from your App's Firebase
+// Function to fetch the dynamic API packages or use fallbacks
 async function getMenuFromApp() {
     try {
-        const response = await fetch(`${FIREBASE_URL}/dishes.json`);
-        const data = await response.json();
-        if (!data) return[];
-        
-        // Convert Firebase object into an array (now includes imageUrl)
+        let data;
+        if (FIREBASE_URL) {
+            const response = await fetch(`${FIREBASE_URL}/packages.json`).catch(() => null);
+            if (response && response.ok) {
+                data = await response.json();
+            }
+        }
+
+        if (!data) {
+            return [
+                { id: 'w1', name: 'Basic', category: 'Wedding', price: 60000, priceText: '60k' },
+                { id: 'w2', name: 'Opal', category: 'Wedding', price: 115000, priceText: '115k' },
+                { id: 'w3', name: 'Emerald', category: 'Wedding', price: 145000, priceText: '145k' },
+                { id: 'w4', name: 'Jadeite', category: 'Wedding', price: 185000, priceText: '185k' },
+                { id: 'p1', name: 'Package 01', category: 'Pre-Shoot', price: 65000, priceText: '65k' },
+                { id: 'p2', name: 'Package 02', category: 'Pre-Shoot', price: 35000, priceText: '35k' }
+            ];
+        }
+
+        // Convert Firebase object into an array
         return Object.keys(data).map(key => ({
             id: key,
             name: data[key].name,
+            category: data[key].category || 'Wedding',
             price: data[key].price,
+            priceText: data[key].priceText || `${data[key].price / 1000}k`,
             imageUrl: data[key].imageUrl
         }));
     } catch (error) {
-        console.error("Failed to fetch menu:", error);
-        return[];
+        console.error("Failed to fetch packages:", error);
+        return [
+            { id: 'w1', name: 'Basic', category: 'Wedding', price: 60000, priceText: '60k' },
+            { id: 'w2', name: 'Opal', category: 'Wedding', price: 115000, priceText: '115k' },
+            { id: 'w3', name: 'Emerald', category: 'Wedding', price: 145000, priceText: '145k' },
+            { id: 'w4', name: 'Jadeite', category: 'Wedding', price: 185000, priceText: '185k' },
+            { id: 'p1', name: 'Package 01', category: 'Pre-Shoot', price: 65000, priceText: '65k' },
+            { id: 'p2', name: 'Package 02', category: 'Pre-Shoot', price: 35000, priceText: '35k' }
+        ];
     }
 }
 
 async function startBot() {
     if (!FIREBASE_URL) {
-        console.log("❌ ERROR: FIREBASE_URL is missing in GitHub Secrets!");
-        process.exit(1);
+        console.log("⚠️ WARNING: FIREBASE_URL is missing! Bot will use fallback static packages.");
     }
 
     const { state, saveCreds } = await useMultiFileAuthState('session_data');
@@ -41,21 +64,21 @@ async function startBot() {
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
-        browser:["S", "K", "1"] 
+        browser: ["S", "K", "1"]
     });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
-        
+
         if (qr) {
-            console.clear(); 
+            console.clear();
             console.log('\n==================================================');
             console.log('⚠️ QR CODE TOO BIG? CLICK "View raw logs" in top right!');
             console.log('==================================================\n');
-            qrcode.generate(qr, { small: true }); 
+            qrcode.generate(qr, { small: true });
         }
 
-        if (connection === 'open') console.log('✅ shamodfirezz AI IS ONLINE!');
+        if (connection === 'open') console.log('✅ Shutter Stories AI IS ONLINE!');
         if (connection === 'close') {
             const reason = lastDisconnect?.error?.output?.statusCode;
             if (reason !== DisconnectReason.loggedOut) startBot();
@@ -74,108 +97,113 @@ async function startBot() {
 
         console.log(`📩 Query: ${text}`);
 
-        // --- 🛒 STEP 2: FINISH ORDER & SEND TO ADMIN PANEL ---
-        if (orderStates[sender]?.step === 'WAITING_FOR_ADDRESS') {
-            const customerDetails = text; // This now contains Name, Phone, and Address
+        // --- 🛒 STEP 2: FINISH BOOKING & SEND TO ADMIN PANEL ---
+        if (orderStates[sender]?.step === 'WAITING_FOR_DETAILS') {
+            const customerDetails = text;
             const item = orderStates[sender].item;
             const customerWaNumber = sender.split('@')[0];
 
-            // Match the exact format of your shamodfirezz Admin Panel
-            const shamodfirezzOrder = {
+            const bookingOrder = {
                 userId: "whatsapp_" + customerWaNumber,
-                userEmail: "whatsapp@shamodfirezz.com",
-                phone: customerWaNumber, // Keeps their WA number registered
-                address: customerDetails, // Saves Name, Phone, and Address typed by them
+                userEmail: "whatsapp@shutterstories.com",
+                phone: customerWaNumber,
+                details: customerDetails,
                 location: { lat: 0, lng: 0 },
-                items:[{
+                items: [{
                     id: item.id,
                     name: item.name,
                     price: parseFloat(item.price),
                     img: item.imageUrl || "",
                     quantity: 1
                 }],
-                total: (parseFloat(item.price) + 50).toFixed(2), // Price + 50 Delivery Fee
-                status: "Placed",
-                method: "Cash on Delivery (WhatsApp)",
+                total: parseFloat(item.price).toFixed(2),
+                status: "Pending",
+                method: "Bank Transfer / Cash (WhatsApp)",
                 timestamp: new Date().toISOString()
             };
 
-            // Save order securely via REST API
             try {
-                await fetch(`${FIREBASE_URL}/orders.json`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(shamodfirezzOrder)
-                });
+                if (FIREBASE_URL) {
+                    await fetch(`${FIREBASE_URL}/bookings.json`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(bookingOrder)
+                    });
+                }
             } catch (error) {
                 console.log("Firebase Error: ", error);
             }
 
-            await sock.sendMessage(sender, { text: `✅ *Order Placed Successfully!* \n\nThank you! Your order for *${item.name}* is being prepared. \n\n*Total:* Rs${shamodfirezzOrder.total} (Inc. Delivery)\n*Status:* Preparing\n\nWe will deliver it to your address soon.` });
-            delete orderStates[sender]; 
+            await sock.sendMessage(sender, { text: `✅ *Booking Request Received!* \n\nThank you! Your request for the *${item.name}* package is being reviewed.\n\n*Total Estimate:* Rs ${item.priceText}\nJanidu will be in touch shortly to confirm and discuss the event.\nWe are excited to capture your moments! 📸` });
+            delete orderStates[sender];
             return;
         }
 
-        // --- 🌟 STEP 1: START ORDER FLOW (WITH IMAGE & PHONE REQUEST) ---
-        if (text.startsWith("order ")) {
-            const productRequested = text.replace("order ", "").trim().toLowerCase();
+        // --- 🌟 STEP 1: START BOOKING FLOW ---
+        if (text.startsWith("book ")) {
+            const productRequested = text.replace("book ", "").trim().toLowerCase();
             const currentMenu = await getMenuFromApp();
-            
-            // Search the live database for the requested item
-            const matchedItem = currentMenu.find(item => item.name.toLowerCase().includes(productRequested));
+
+            // Search the packages
+            const matchedItem = currentMenu.find(item => item.name.toLowerCase().includes(productRequested) || item.id.toLowerCase() === productRequested);
 
             if (!matchedItem) {
-                await sock.sendMessage(sender, { text: `❌ Sorry, we couldn't find *${productRequested}* in our menu today.\n\nType *menu* to see all available items.` });
+                await sock.sendMessage(sender, { text: `❌ Sorry, we couldn't find *${productRequested}* in our packages.\n\nType *packages* to see all available options.` });
                 return;
             }
 
-            orderStates[sender] = { step: 'WAITING_FOR_ADDRESS', item: matchedItem };
-            
-            // 🌟 NEW: SEND PRODUCT IMAGE + ASK FOR PHONE NUMBER 🌟
-            const captionText = `🛒 *Order Started!* \n\nYou selected: *${matchedItem.name}* (Rs${matchedItem.price})\n\nPlease reply with your *Full Name, Phone Number, and Delivery Address*.`;
-            
-            // If the product has an image URL in Firebase, send it as a WhatsApp Photo
+            orderStates[sender] = { step: 'WAITING_FOR_DETAILS', item: matchedItem };
+
+            const captionText = `📸 *Booking Started!* \n\nYou selected: *${matchedItem.name}* (Rs ${matchedItem.priceText})\n\nPlease reply with your *Full Name, Phone Number, Date of Event, and Event Location* (We service Horana and Colombo).`;
+
             if (matchedItem.imageUrl) {
-                await sock.sendMessage(sender, { 
-                    image: { url: matchedItem.imageUrl }, 
-                    caption: captionText 
+                await sock.sendMessage(sender, {
+                    image: { url: matchedItem.imageUrl },
+                    caption: captionText
                 });
             } else {
-                // Fallback if no image is found
                 await sock.sendMessage(sender, { text: captionText });
             }
         }
-        else if (text === "order") { 
-            await sock.sendMessage(sender, { text: "🛒 *How to order:* \nPlease type 'order' followed by the dish name. \nExample: *order pizza*" });
+        else if (text === "book") {
+            await sock.sendMessage(sender, { text: "📸 *How to book:* \nPlease type 'book' followed by the package name. \nExample: *book basic*" });
         }
-        
-        // --- DYNAMIC MENU FEATURE ---
-        else if (text.includes("menu") || text.includes("price") || text.includes("list") || text.includes("food")) {
+
+        // --- DYNAMIC PACKAGES FEATURE ---
+        else if (text.includes("wedding") || text.includes("package") || text.includes("pre-shoot") || text.includes("price") || text.includes("list")) {
             const currentMenu = await getMenuFromApp();
-            
+
             if (currentMenu.length === 0) {
-                await sock.sendMessage(sender, { text: "Our menu is currently empty or updating. Please check back soon!" });
+                await sock.sendMessage(sender, { text: "Our packages list is currently updating. Please check back soon!" });
                 return;
             }
 
-            let menuMessage = "🍔 *shamodfirezz LIVE MENU* 🍕\n\n";
-            currentMenu.forEach(item => {
-                menuMessage += `🔸 *${item.name}* - Rs${item.price}\n`;
+            const weddings = currentMenu.filter(p => p.category === 'Wedding');
+            const preshoots = currentMenu.filter(p => p.category === 'Pre-Shoot');
+
+            let message = "📸 *Shutter Stories Packages* 📸\n\n";
+            message += "*Wedding Packages:*\n";
+            weddings.forEach(item => {
+                message += `🔸 ${item.name} - Rs ${item.priceText}\n`;
             });
-            menuMessage += "\n_To order, reply with 'order [dish name]'_";
-            
-            await sock.sendMessage(sender, { text: menuMessage });
+            message += "\n*Pre-Shoot Packages:*\n";
+            preshoots.forEach(item => {
+                message += `🔸 ${item.name} - Rs ${item.priceText}\n`;
+            });
+            message += "\n_Type 'book [package name]' to book your package!_";
+
+            await sock.sendMessage(sender, { text: message });
         }
 
         // --- GREETINGS ---
         else if (text.includes("hi") || text.includes("hello") || text.includes("hey")) {
-            await sock.sendMessage(sender, { text: "👋 *Welcome to shamodfirezz!* \n\nI am your AI Assistant. Type *menu* to see our delicious food, or type *order [dish]* to buy instantly!" });
+            await sock.sendMessage(sender, { text: "👋 *Welcome to Shutter Stories!* \n\nI am your AI Assistant. I can help you book photography sessions with Janidu!\nWe primarily cover *Horana* and *Colombo*.\n\nType *packages* or *wedding* to view our options, or type *book [package]* to start booking!" });
         }
         else if (text.includes("contact") || text.includes("call")) {
-            await sock.sendMessage(sender, { text: "📞 *Contact shamodfirezz:* \n\n- *Email:* support@shamodfirezz.com" });
+            await sock.sendMessage(sender, { text: "📞 *Contact Shutter Stories:* \n\n- *Owner:* Janidu\n- *Locations:* Horana & Colombo\n- *Email:* contact@shutterstories.com" });
         }
         else {
-            await sock.sendMessage(sender, { text: "🤔 I didn't quite catch that.\n\nType *menu* to see our food list, or *order [food]* to place an order!" });
+            await sock.sendMessage(sender, { text: "🤔 I didn't quite catch that.\n\nType *packages* to see our packages list, or *book [package]* to book a session!" });
         }
     });
 }
